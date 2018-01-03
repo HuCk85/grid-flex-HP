@@ -1,116 +1,179 @@
 clc, clear all, close all
 
-%main script for simulating load profiles in multifamily houses
+%% PATHS TO DATA
 
-path = 'C:\Users\claessan\Dropbox\Projektlista\Samspel\Modeller\Flerbostadshusmodell\Data';
+path = './Data/';
 
-%% Parametervärden
+%% SIMULATION OPTIONS
 
-simParam.dt = 1/60; % time resolution of simulations. 1/1 = hourly, 1/15 = quarterly, 1/60 = minutewise, etc. 
+%Simulation related parameters, e.g. time resolution, etc.
+simParam.dt = 1/60; % time resolution of simulations. 1/1 = hourly, 1/15 = quarterly, 1/60 = minutewise, etc.
 simParam.n = 24; %24 h = 1 dygn
 
-%byggndsparametrar
-buildingParam.NrApartments = 5;
-buildingParam.NR_of_persons = 2; %en slumpfunktion i nästa steg, hur stort hushållet är baseras på 
-buildingParam.Totpersons = buildingParam.NrApartments*buildingParam.NR_of_persons;
-buildingParam.Afloor = 35; %Total uppvärmd yta per person i m2
-[lambda, A_window] = thermoParameters( buildingParam.Afloor); %termodynamiska parametrar för byggnaden
-buildingParam.lambda = lambda*buildingParam.Totpersons;
-buildingParam.A_window = A_window*buildingParam.Totpersons;
-buildingParam.tau = 24;
+% The start and end times of the simulations
+simParam.Tstart = datetime('2016-09-30 00:00:00');
+simParam.Tend = datetime('2017-09-18 00:00:00' );
 
-%hvac-systemsparametrar
-HVACParam.Tref = 21; 
-HVACParam.T0 = HVACParam.Tref;
-HVACParam.COP = 3;
-HVACParam.TDUT = -12.2; %Boverkets öppna data
-HVACParam.Psh = buildingParam.lambda*(HVACParam.Tref-HVACParam.TDUT)/HVACParam.COP; %Värmepumpens dimensionering
-HVACParam.controller = 'outdoortemp'; %[outdoortemp, indoortemp] Could either be outdoor temp controlled, or indoor temp controlled heating system
-HVACParam.calibration = 0.80; % [%] the relation between heat output and outdoor temperature. Should not be one to one as some energy comes for free from internal gains,etc.
-HVACParam.delta = 0.25; %[C] the temperature range of the indoor temp heuristic controller
-HVACParam.Tbreak = 0; %[C] the break temperature where the electric heater kicks in
-%[Php, Ppeak] = HVACdimensioning(HVACParam);
+%The simulation time steps 
+t = simParam.Tstart:hours(1):(simParam.Tend); t = t(1:end-1);
 
-%DHW parametrar
-DHWParam.Vtank = buildingParam.Totpersons*150;
-DHWParam.Ptap = buildingParam.Totpersons*1;
-DHWParam.Tref = 70;
-DHWParam.T0 = DHWParam.Tref-10;
-DHWParam.delta = 2;
+%% LOADING INPUT DATA
 
-% flexibilitetsparametrar
-%hvac
-flexParamHVAC.deltaT = 0; %[C] +- temperature deviation from the indoor temp reference
-flexParamHVAC.priceMax = 400; %max(priceData);
-flexParamHVAC.priceMean = 200;
-%dhw
-flexParamDHW.deltaT = 0; %[C] +- tank temperature deviation from the tank temp reference
-flexParamDHW.priceMax = 400;
-flexParamDHW.priceMean = 200;
-%ev
-flexParamEV.minSOC = 1; %minSOC allowed for electric vehicle
-flexParamEV.priceMax = 400; %SEK/mwh
-flexParamEV.priceMean = 200; %SEK/mwh
+%Load the weather data (solar irradiance and outdoor temperature time series)
+load '.\Data\weatherData.mat'
 
-%% Ladda data
+%DAYTYPE (0 = weekday, 1 = weekend)
+weekd = weekday(t);
+dtype = zeros(length(weekd),1);
+dtype(find(weekd == 6 | weekd == 7)) = 1;
+dtype_daily = dtype(1:24:end);
 
-data = csvread(strcat(path, '\HerrljungaWeatherData2015.csv'));
-dtype = csvread(strcat(path, '\weekdayweekends.csv'));
-priceData = csvread(strcat(path, '\elprices2015.csv')); 
-simData = [data(:,2)/1000 data(:,3) dtype(:,end) priceData]; %simuleringsdata
+%Put all data in a matrix
+simData = [weatherData(:,2)/1000 weatherData(:,1) dtype]; %simulation data dtype(:,end), solar radiation, outdoor temp, and day type
 
-%% Simulations
+%Load appliance and DHW use from earlier simulaton if you think it is too
+%slow. If so, comment row X and Y.
+load './Data/use case 1/appData.mat'
 
-N = 20;
-total_base = zeros(N,simParam.n);
-total_flex = zeros(N,simParam.n);
+%% SET THE MODEL PARAMETERS
 
-for j = 1:1
-tic
-ind = (24*(j-1)+1):(24*j);
+%----------------- BUILDING PARAMETERS (thermodynamics and end-users) -----------------%
 
-weatherData.Tout = simData(ind,2); weatherData.Psun = simData(ind,1);
-daytype = simData(ind(1),3); priceData = simData(ind,4); 
-%interpolate data to fit simulation time resolution
+buildingParam.NrApartments = 156; %the number of apartments in the building
+%buildingParam.NR_of_persons = 2; %en slumpfunktion i nästa steg, hur stort hushållet är baseras på
 
-weatherData.Psun = interp1(1:simParam.n, weatherData.Psun', linspace(1,simParam.n,simParam.n/simParam.dt));
-weatherData.Tout = interp1(1:simParam.n, weatherData.Tout', linspace(1,simParam.n,simParam.n/simParam.dt));
-priceData = interp1(1:simParam.n, priceData', linspace(1,simParam.n,simParam.n/simParam.dt));
+%Outputs parameters for appliance and DHW use in apartments
+%[S,A,L] = default_parameters_apartments(simParam, buildingParam, path);
+
+%Generate the minute wise appliance use and DHW use for the time period.
+%the internal gain and number of members are also output
+%[Papp, Pdhw, Wdhw, Pint, num_of_members] = stochastic_load_model(S, A, L, simData(:,1), dtype_daily);
+
+buildingParam.Totpersons = sum(num_of_members); %the total number of people in the building
+buildingParam.Afloor = 30; %Total heated space per person in m2
+building_age = 'medium'; %Possible values; old, medium, new
+[lambda, A_window] = thermoParameters( buildingParam.Afloor, building_age); %The thermodynamic properties of the building per capita
+buildingParam.lambda = lambda*buildingParam.Totpersons; %The transmisson loss for the whole building
+buildingParam.A_window = A_window*buildingParam.Totpersons; %The total window area of the building
+buildingParam.shadow = 0.15; %the shadowing factor for the windows
+buildingParam.tau = 100; %The time constant of the building in hours
+
+%----------------- HVAC SYSTEM PARAMETERS (dimensioning) ------------------------------%
+
+HVACParam.Tref = 21; %[C] The reference indoor temp
+HVACParam.T0 = HVACParam.Tref; %[C] the inital temperature in the simulation (flytta eventuellt)
+HVACParam.COP = 2.5; %The seaonal COP factor of the heat pump. Depends on heat source, e.g ground, air, etc.
+HVACParam.TDUT = -16.0; %[C] The winter dimensioning temperature of the heating system. Depends on the geographic area
+HVACParam.Theat = 15; %[C] The balance outdoor temperture where no heating is required
+
+HVACParam.Thp = 7; %the outdoor temperature threshold where the base heating unit can cover the whole heating demand
+HVACParam.Tmax = 25; %the maximum possible indoor temperature, before people open windows etc.
+HVACParam.supply = 'bivalent'; %the config of heating system, possible values: mono (only heat pump), mono-energetic (HP + electric heater), bivalent (HP + district heating)
+[HVACParam.Php, HVACParam.Ppeak] = heatingDimensioning(HVACParam, buildingParam); %Dimensions the heating capacity based on building parameters, TDUT and supply concept
+
+%----------------- CONTROL PARAMETERS OF THE SPACE HEATING  ------------------------------%
+
+controlParam.controller = 'outdoortemp'; %[outdoortemp, indoortemp] Could either be outdoor temp controlled, or indoor temp controlled heating system
+controlParam.deltaOutdoor = 0.5; %[C] the temperature span for the intregral control method, large span = slower controller (i.e. fewer cycle)
+controlParam.Toutlag = 8; % [hrs] the number of hours in the window of the moving average of the outdoor temperature
+controlParam.calibration = 0.7; % [%] the relation between heat output and outdoor temperature. Should not be one to one as some energy comes for free from internal gains,etc.
+degreemin0 = 0; %the intial value of the integral control
+controlParam.probonState = 0.5; %the probability that the heat pump is in an on state at the start of the simulations
+controlParam.deltaIndoor = 1; %[C] the dead band of the indoor temperature control
+
+%----------------- DHW PARAMETERS  ------------------------------%
+
+DHWParam.COP = HVACParam.COP;
+DHWParam.Vtank = buildingParam.Totpersons*150; %[liters] The hot water tank in liters for whole building
+DHWParam.Ptap = (buildingParam.Totpersons*2)/DHWParam.COP; %[kW] The hot water tank in liters for whole building
+DHWParam.Tref = 70; %[C] the reference temperature of the hot water tank
+DHWParam.T0 = DHWParam.Tref; %the inital temperature of the hot water tank
+DHWParam.delta = 2; %The temperature deviation of the heuristic controller
+
+%% OUTPUT DATA THAT WILL BE SAVED. EVERYTHING IS HOURLY
+
+N = length(t)/24; %the number of days in the simulations
+
+%appliance related data
+Papp_save = zeros(N,24);
+Pint_save = zeros(N,24);
+
+%dhw related data
+Pdhw_save = zeros(N,24);
+Tdhw_save = zeros(N,24);
+
+%space heating related data
+Pbase_save = zeros(N,24);
+Ppeak_save = zeros(N,24);
+Ptotal_save = zeros(N,24);
+TSH_save = zeros(N,24);
+
+%% PERFORM SIMULATIONS FOR SPACE HEATING
+
+for j = 1:N
     
-%appliances
-behaviorData.app_data = behavior_func(buildingParam.Totpersons , daytype, path, 'appliances');
-outputApp = appliance_usage_func(behaviorData.app_data, buildingParam.Totpersons, weatherData.Psun, path);
+    tic
+    ind = (24*(j-1)+1):(24*j);
+    minute_ind = (60*(ind(1)-1)+1):(ind(end)*60); %minute wise 
+    
+    if j > 1
+        ind2 = ((ind(1))-controlParam.Toutlag):(ind(end));
+    else
+        ind2 = [repmat(ind(1),1,controlParam.Toutlag) ind];
+    end
+    
+    %Interpolate the weather data at a minute time resolution
 
-%DHW
-behaviorData.tap_data = behavior_func(buildingParam.Totpersons, daytype, path,'tap');
-DHWconsData = hotwater_usage_func(behaviorData.tap_data);
-outputDHW = DHW_control(simParam, DHWParam, flexParamDHW, DHWconsData, priceData);
-
-%space heating
-outputSH = SH_control(simParam, buildingParam, HVACParam, flexParamHVAC, weatherData, priceData, outputApp);
-
-%total = outputApp.Preg + outputDHW
-
-%total_base(j,:) = hourly_average(sum([outputApp.Preg;outputDHW.Preg]),24);
-%;outputEV.Preg ;outputSH.Preg]
-%total_flex(j,:) = hourly_average(sum([outputApp.Preg;outputDHW.Pregshadow;outputSH.Pregshadow]),24);
-toc
+    Toutdata_lag = simData(ind2,2);
+    %interpolate data to fit simulation time resolution
+    Psun = interp1(1:simParam.n, simData(ind,1)', linspace(1,simParam.n,simParam.n/simParam.dt));
+    Tout = interp1(1:simParam.n, simData(ind,2)', linspace(1,simParam.n,simParam.n/simParam.dt));
+    weather = [Psun' Tout'];
+    
+    %Space heating
+    
+    %The inital indoor temperature. If it's the first iteration, it will be
+    %set to the reference, otherwise it is set to the last value from the
+    %previous iteration
+    
+    if j > 1
+        T0 = outputSH.T(end);
+        
+    else
+        T0 = HVACParam.Tref;
+    end
+    
+    outputSH = spaceHeating(buildingParam, HVACParam, controlParam, weather, Pint(minute_ind), Toutdata_lag, T0, degreemin0);
+    degreemin0 = outputSH.degreemin(end);
+    
+    %Save the data
+    
+    %appliance related data
+    Papp_save(j,:) = hourly_average(Papp(minute_ind),24);
+    Pint_save(j,:) = hourly_average(Pint(minute_ind),24);
+    
+    %dhw related data
+    Pdhw_save(j,:) = hourly_average(Pdhw(minute_ind),24);
+    %Tdhw_save = zeros(N,1440);
+    
+    %space heating related data
+    Pbase_save(j,:) = hourly_average(outputSH.Php,24);
+    Ppeak_save(j,:) = hourly_average(outputSH.Pdh,24);
+    
+    TSH_save(j,:) = hourly_average(outputSH.T,24);
+    
+    %Total load of building
+    Ptotal_save(j,:) = Pbase_save(j,:) + Ppeak_save(j,:) + Papp_save(j,:) + Pdhw_save(j,:);
+    
+    toc
 end
 
-%% 
-subplot(2,2,1)
-plot(outputApp.Preg);
-subplot(2,2,2)
-plot(outputDHW.Preg )
-subplot(2,2,3)
-plot(outputApp.Preg + outputDHW.Preg)
-subplot(2,2,4)
-plot(outputApp.Preg + outputDHW.Preg + outputSH.Preg )
-% 
-% subplot(1,2,1)
-% plot(outputSH.Preg)
-% subplot(1,2,2)
-% %yyaxis left
-% plot(outputSH.T) 
-% %yyaxis right
-%plot(DHWconsData)
+%% VISUALIZATION AND ANALYSIS
+
+% CODE HERE
+
+subplot(2,1,1)
+plot(Ptotal_save'), title('Daily total load profile for building'), xlabel('Time [hrs]'), ylabel('Load [kW]')
+
+subplot(2,1,2)
+plot(TSH_save'), title('Daily indoor temp for building'), xlabel('Time [hrs]'), ylabel('temp [C]')

@@ -1,4 +1,4 @@
-function output = DHW_control(simParam, DHWParam, flexParam, DHWconsData, priceData)
+function output = DHW_control(simParam, DHWParam, DHWconsData, priceData)
 
 n = length(DHWconsData);
 
@@ -25,7 +25,7 @@ for i = 1:n
         
         
     elseif Ttank(i) < DHWParam.Tref - DHWParam.delta/2
-        Qcharge(i) = DHWParam.Ptap*simParam.dt;
+        Qcharge(i) = DHWParam.COP*DHWParam.Ptap*simParam.dt;
         Ptap(i) = DHWParam.Ptap;
         
     else
@@ -50,38 +50,38 @@ for i = 1:n
 
 %flexibilitet
     
-    Trefsh = TCflexCharge(DHWParam.Tref, flexParam, priceData(i));
-    
-    if Ttankshadow(i) >= Trefsh + DHWParam.delta/2 %over reference temp
-        Qchargeshadow(i) = 0;
-        Ptapshadow(i) = 0;
-        
-        
-    elseif Ttankshadow(i) < Trefsh- DHWParam.delta/2
-        Qchargeshadow(i) = DHWParam.Ptap*simParam.dt;
-        Ptapshadow(i) = DHWParam.Ptap;
-        
-    else
-        if i > 1
-            Qchargeshadow(i) = Qchargeshadow(i-1);
-            Ptapshadow(i) = Ptap(i-1);
-            
-        else
-            Qchargeshadow(i) = 0;
-            Ptapshadow(i) = 0;
-        end
-        
-    end
-
-    Ttankshadow(i+1) = Ttankshadow(i) + (Qchargeshadow(i) - DHWconsData(i))/(DHWParam.Vtank *Cp_water);
-    
-    if Ttankshadow(i+1) < Tinlet
-        Ttankshadow(i+1) = Tinlet;
-    end
-    
-    Etankshadow(i+1) =  DHWParam.Vtank*Cp_water*(Ttankshadow(i+1)-Tinlet);
-    Trefshadow(i) = Trefsh;
-    
+%     Trefsh = TCflexCharge(DHWParam.Tref, flexParam, priceData(i));
+%     
+%     if Ttankshadow(i) >= Trefsh + DHWParam.delta/2 %over reference temp
+%         Qchargeshadow(i) = 0;
+%         Ptapshadow(i) = 0;
+%         
+%         
+%     elseif Ttankshadow(i) < Trefsh- DHWParam.delta/2
+%         Qchargeshadow(i) = DHWParam.Ptap*simParam.dt;
+%         Ptapshadow(i) = DHWParam.Ptap;
+%         
+%     else
+%         if i > 1
+%             Qchargeshadow(i) = Qchargeshadow(i-1);
+%             Ptapshadow(i) = Ptap(i-1);
+%             
+%         else
+%             Qchargeshadow(i) = 0;
+%             Ptapshadow(i) = 0;
+%         end
+%         
+%     end
+% 
+%     Ttankshadow(i+1) = Ttankshadow(i) + (Qchargeshadow(i) - DHWconsData(i))/(DHWParam.Vtank *Cp_water);
+%     
+%     if Ttankshadow(i+1) < Tinlet
+%         Ttankshadow(i+1) = Tinlet;
+%     end
+%     
+%     Etankshadow(i+1) =  DHWParam.Vtank*Cp_water*(Ttankshadow(i+1)-Tinlet);
+%     Trefshadow(i) = Trefsh;
+%     
 end
 
 output.Preg= Ptap;

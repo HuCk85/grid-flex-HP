@@ -24,7 +24,7 @@ else
     end
     if strcmp(type,'tap')
         file = 'M_ap_tap_wed.mat'; %heter M
-    end;
+    end
     fname=fullfile(path,file);
     load(fname);
     M_exp = M_ap_wed;
